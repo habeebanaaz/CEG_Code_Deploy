@@ -20,7 +20,7 @@ def convert_utc_to_et(utc_dt):
     return utc_dt.astimezone(eastern)
 
 # Function to filter files based on last modified time
-def filter_files(parent_folder, prefix='DeliveryPlan'):
+def filter_files(parent_folder, prefix='DeliveryPlan', suffix='Exelon'):
     # Get today's date
     today = convert_utc_to_et(datetime.now())
     current_year = today.year
@@ -51,12 +51,12 @@ def filter_files(parent_folder, prefix='DeliveryPlan'):
                                 file_path = os.path.join(month_path, file)
 
                                 # Check if the file starts with the specified prefix
-                                if os.path.isfile(file_path) and file.startswith(prefix):
-                                    # Get the last modified time of the file
-                                    mod_time = convert_utc_to_et(datetime.fromtimestamp(os.path.getmtime(file_path)))
+                                if os.path.isfile(file_path) and file.startswith(prefix) and not file.endswith(suffix):
+                                     # Get the last modified time of the file
+                                     mod_time = convert_utc_to_et(datetime.fromtimestamp(os.path.getmtime(file_path)))
 
-                                    # Check if the modification date is this month or in future months
-                                    if (mod_time.year == year and mod_time.month >= month) or (mod_time.year > year):
+                                     # Check if the modification date is this month or in future months
+                                     if (mod_time.year == year and mod_time.month >= month) or (mod_time.year > year):
                                         filtered_files.append(file_path)
                         except ValueError:
                             print(f"Skipping folder '{month_folder}': Invalid format.")
