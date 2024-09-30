@@ -20,7 +20,7 @@ def convert_utc_to_et(utc_dt):
     return utc_dt.astimezone(eastern)
 
 # Function to filter files based on last modified time
-def filter_files(parent_folder, prefix='DeliveryPlan', suffix='Exelon'):
+def filter_files(parent_folder, prefix='DeliveryPlan'):
     # Get today's date
     today = convert_utc_to_et(datetime.now())
     current_year = today.year
@@ -51,7 +51,7 @@ def filter_files(parent_folder, prefix='DeliveryPlan', suffix='Exelon'):
                                 file_path = os.path.join(month_path, file)
 
                                 # Check if the file starts with the specified prefix
-                                if os.path.isfile(file_path) and file.startswith(prefix) and not file.endswith(suffix):
+                                if os.path.isfile(file_path) and file.startswith(prefix):
                                      # Get the last modified time of the file
                                      mod_time = convert_utc_to_et(datetime.fromtimestamp(os.path.getmtime(file_path)))
 
