@@ -51,7 +51,7 @@ def filter_files(parent_folder, prefix='DeliveryPlan'):
                                 file_path = os.path.join(month_path, file)
 
                                 # Check if the file starts with the specified prefix
-                                if os.path.isfile(file_path) and file.startswith(prefix):
+                                if os.path.isfile(file_path) and file.startswith(prefix) and not file.__contains__("Exelon"):
                                      # Get the last modified time of the file
                                      mod_time = convert_utc_to_et(datetime.fromtimestamp(os.path.getmtime(file_path)))
 
