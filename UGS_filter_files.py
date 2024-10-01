@@ -48,4 +48,5 @@ if __name__ == "__main__":
    # Print the filtered list of files
    print("Files with today's or future dates:")
    for file in filtered_files:
-    print(file)
+    if file.startswith("current"):
+     print(file)
