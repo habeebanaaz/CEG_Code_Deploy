@@ -1,6 +1,6 @@
 # Ignore json files
-C:\Users\v91217\Downloads\Upload_Test\config.json
+*.json
 # Ignore log files
-C:\Users\v91217\Downloads\Upload_Test\info.log
+info.log
 # Ignore env files
-C:\Users\v91217\Downloads\Upload_Test\.env
+.env

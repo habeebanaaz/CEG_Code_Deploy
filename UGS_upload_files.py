@@ -56,7 +56,7 @@ def upload_files_to_blob(local_directory, container_name):
         for file in files:
          if(file in filtered_files_list):
           print("This file is today's or future's date")
-          if file.endswith('.csv') or file.endswith('.xls') or file.endswith('.xlsx'):
+          if (file.endswith('.csv') or file.endswith('.xls') or file.endswith('.xlsx')) and (file.startswith("current)")):
              file_path = os.path.join(root, file)
              blob_client = container_client.get_blob_client(file)
              #Last modified timestamp of Local file
