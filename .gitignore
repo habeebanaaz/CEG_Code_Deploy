@@ -4,3 +4,6 @@
 info.log
 # Ignore env files
 .env
+venv
+amr_import/amr_log/*.log
+amr_import/amr_data.csv
