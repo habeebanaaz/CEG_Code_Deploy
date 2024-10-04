@@ -1,0 +1,4 @@
+venv
+.env
+amr_import/amr_log
+amr_import/amr_data.csv
