@@ -173,11 +173,14 @@ def transform_flow(df, gas_date):
     logger.info(f"Total Columns {df.columns}")
     logger.info(f"Total Columns {len(df.columns)}")
     logger.info(f"Total Rows {df.shape[0]}")
-    df['TIME'] = gas_date + " " + df["TIME"]
-    df['TIME'] = pd.to_datetime(df['TIME'], format='%Y-%m-%d %I:%M:%S %p').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    df['DateTime'] = gas_date + " " + df["TIME"]
+    df['DateTime'] = pd.to_datetime(df['DateTime'], format='%Y-%m-%d %I:%M:%S %p').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    df = pd.melt(df, id_vars='TIME', var_name='Name', value_name='Value')    
-    return df
+    df = pd.melt(df, id_vars='DateTime', var_name='Name', value_name='Value')   
+    df_sorted = df.sort_values(by='DateTime')
+    lowest_time = df_sorted['DateTime'].min()
+    highest_time = df_sorted['DateTime'].max() 
+    return df, lowest_time, highest_time
 
 def create_record( web_api_url, access_token, table_name,payload, id_col):
     url = f"{web_api_url}/{table_name}?$select={id_col}"
@@ -275,7 +278,7 @@ def insert_flow_readings(web_api_url, access_token, env_url, payloads):#, existi
     total_len=len(payloads)
     count_per_batch = 5000
     splits = math.ceil(total_len / count_per_batch)
-    logger.warning(f"Delete List\nSplits: {splits}; ")
+    logger.warning(f"Insert List\nSplits: {splits}; ")
     try:
         payload_batches = split_into_chunks(payloads, splits=splits)
         for idx, payload_batch in enumerate(payload_batches):
@@ -298,7 +301,7 @@ def insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_
     payloads = []
     for index, rec in processed_df.iterrows():
         payloads.append({
-                    "gas_datetime":rec['TIME'],
+                    "gas_datetime":rec['DateTime'],
                     "gas_name":rec["Name"],
                     "gas_value":float(rec['Value'])
     })
@@ -330,12 +333,12 @@ def get_table_record_ids( access_token, table_name,id_col, url):
     except Exception as e:
             raise Exception(f"Exception occurred while obtaining Table Record Ids: {e}")
             # return {'status':'fail'}
-def find_and_del_flow(web_api_url, access_token, gas_date):
+def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
     try:
         table_name="gas_flows"
         id_col="gas_flowid"
-        date_filter = f"&$filter=gas_datetime ge {gas_date}T00:00:00Z and gas_datetime le {gas_date}T23:59:59Z"
-
+        date_filter = f"&$filter=gas_datetime ge {lowest_time} and gas_datetime le {highest_time}"
+        logger.warn(date_filter)
         url = (
             f"{web_api_url}/{table_name}?$select={id_col}"
             f"{date_filter}"
@@ -416,12 +419,12 @@ def find_and_del_flow(web_api_url, access_token, gas_date):
 #         else:
 #             return {'status':'fail','message':'Some deleted',  "to_delete":to_delete_count, "deleted": deleted_count,'undeleted':undeleted, 'delete_results':delete_results}
     
-def delete_existing_flow(web_api_url, access_token, env_url, gas_date):
+def delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time):
     # del_result = find_and_del_flow(web_api_url, access_token, gas_date)
     try:
         start_time = time.time()
         # logger.info(f"Starting Time for Delete Job {start_time}")
-        del_result = find_and_del_flow(web_api_url, access_token, gas_date)
+        del_result = find_and_del_flow(web_api_url, access_token, lowest_time, highest_time)
         end_time = time.time()
         time_taken = end_time - start_time
         # logger.info(f"Ending Time for Delete Job {end_time}")
@@ -435,7 +438,7 @@ def delete_existing_flow(web_api_url, access_token, env_url, gas_date):
         # else:
         #     raise Exception(f"Unable to delete exisiting flow values from the table for {gas_date} - {del_result}")
     except Exception as e:
-        logger.error(f"Error in deleting existing flow for {gas_date} : {e}")
+        logger.error(f"Error in deleting existing flow for : {e}")
         raise  
 
 def delete_record(web_api_url, access_token, table_name, id):
@@ -564,11 +567,11 @@ def flow_import(gas_date:str, env:str):
         web_api_url = f"{env_url}/api/data/v9.2"
         access_token = get_access_token(tenant_id,client_id,client_secret,env_url)
         logger.info(f"FLOW IMPORT for {gas_date}")
-        delete_existing_flow(web_api_url, access_token, env_url, gas_date)
         logger.info(f"Getting source data for {gas_date}")
         source_df = get_source_data_from_azure(gas_date)
         logger.info(f"Transforming data")
-        processed_df = transform_flow(source_df, gas_date)
+        processed_df, lowest_time, highest_time = transform_flow(source_df, gas_date)
+        delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time)
         logger.info(f"Writing data to dataverse")
         insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)
     except Exception as e:
