@@ -173,13 +173,17 @@ def transform_flow(df, gas_date):
     logger.info(f"Total Columns {df.columns}")
     logger.info(f"Total Columns {len(df.columns)}")
     logger.info(f"Total Rows {df.shape[0]}")
-    df['DateTime'] = gas_date + " " + df["TIME"]
-    df['DateTime'] = pd.to_datetime(df['DateTime'], format='%Y-%m-%d %I:%M:%S %p').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    df = pd.melt(df, id_vars='DateTime', var_name='Name', value_name='Value')   
-    df_sorted = df.sort_values(by='DateTime')
-    lowest_time = df_sorted['DateTime'].min()
-    highest_time = df_sorted['DateTime'].max() 
+    df['TIME'] = gas_date + " " + df["TIME"]
+    df['TIME'] = pd.to_datetime(df['TIME'], format='%Y-%m-%d %I:%M:%S %p').dt.tz_localize('UTC')
+    start_time = pd.to_datetime('2024-10-02T00:00:00Z')
+    end_time = pd.to_datetime('2024-10-02T10:00:00Z')
+    mask = (df['TIME'] >= start_time) & (df['TIME'] < end_time)
+    df.loc[mask, 'TIME'] += pd.Timedelta(days=1)
+    df['TIME'] = df['TIME'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    df = pd.melt(df, id_vars='TIME', var_name='Name', value_name='Value')   
+    df_sorted = df.sort_values(by='TIME')
+    lowest_time = df_sorted['TIME'].min()
+    highest_time = df_sorted['TIME'].max() 
     return df, lowest_time, highest_time
 
 def create_record( web_api_url, access_token, table_name,payload, id_col):
@@ -301,7 +305,7 @@ def insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_
     payloads = []
     for index, rec in processed_df.iterrows():
         payloads.append({
-                    "gas_datetime":rec['DateTime'],
+                    "gas_datetime":rec['TIME'],
                     "gas_name":rec["Name"],
                     "gas_value":float(rec['Value'])
     })
@@ -367,7 +371,7 @@ def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
                     total_len=len(record_ids)
                     count_per_batch = 1000
                     splits = math.ceil(total_len / count_per_batch)
-                    logger.warning(f"     Batches: {splits}; ")
+                    logger.info(f"     Batches: {splits}; ")
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]={"Records to Delete":None,"Total Batches":None,"Batch":{},"Delete Status":None}
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]["Records to Delete"]=to_delete_count
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]["Total Batches"]=splits
@@ -559,21 +563,24 @@ def flow_import(gas_date:str, env:str):
     if gas_date=='auto':
         gas_date = job_start_time_est - timedelta(days=1)
         gas_date = gas_date.strftime('%Y-%m-%d')
+    if env=="dev":
+        env_url=os.getenv("DV_ENV_URL")
+    elif env=="stage":
+        env_url=os.getenv("DV_STAGE_ENV_URL")
+    web_api_url = f"{env_url}/api/data/v9.2"
+    access_token = get_access_token(tenant_id,client_id,client_secret,env_url)
+    logger.info(f"FLOW IMPORT for {gas_date}")
+    logger.info(f"Getting source data for {gas_date}")
+    source_df = get_source_data_from_azure(gas_date)
+    logger.info(f"Transforming data")
+    processed_df, lowest_time, highest_time = transform_flow(source_df, gas_date)
+    processed_df.to_csv("dfa")
+    delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time)
+    logger.info(f"Writing data to dataverse")
+    insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)    
     try:
-        if env=="dev":
-            env_url=os.getenv("DV_ENV_URL")
-        elif env=="stage":
-            env_url=os.getenv("DV_STAGE_ENV_URL")
-        web_api_url = f"{env_url}/api/data/v9.2"
-        access_token = get_access_token(tenant_id,client_id,client_secret,env_url)
-        logger.info(f"FLOW IMPORT for {gas_date}")
-        logger.info(f"Getting source data for {gas_date}")
-        source_df = get_source_data_from_azure(gas_date)
-        logger.info(f"Transforming data")
-        processed_df, lowest_time, highest_time = transform_flow(source_df, gas_date)
-        delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time)
-        logger.info(f"Writing data to dataverse")
-        insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)
+        pass
+        
     except Exception as e:
         logger.error(f"IMPORT FOR {gas_date} UNSUCCESSFULL {e}")
         subject="Error: Issue in importing Flow Data to Azure Storage"
