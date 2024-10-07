@@ -77,7 +77,7 @@ def get_source_data_from_azure(gas_date):
     source_df = get_blob_csv_file_as_df(blob_file_name)
     if source_df.empty:
         raise Exception(f"Flow values are not present")
-    logger.info(f"source_df: {source_df.head(1)}")
+    # logger.info(f"source_df: {source_df.head(1)}")
     return source_df
 
 def get_blob_csv_file_as_df(blob_file_name):
@@ -170,8 +170,12 @@ def create_bulk_record( web_api_url, access_token, table_name,payloads):
 
 def transform_flow(df, gas_date):
     df = df.dropna(axis=1, how='all')
+    logger.info(f"Total Columns {df.columns}")
+    logger.info(f"Total Columns {len(df.columns)}")
+    logger.info(f"Total Rows {df.shape[0]}")
     df['TIME'] = gas_date + " " + df["TIME"]
     df['TIME'] = pd.to_datetime(df['TIME'], format='%Y-%m-%d %I:%M:%S %p').dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
     df = pd.melt(df, id_vars='TIME', var_name='Name', value_name='Value')    
     return df
 
@@ -298,7 +302,7 @@ def insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_
                     "gas_name":rec["Name"],
                     "gas_value":float(rec['Value'])
     })
-    # logger.info(f"payloads: {payloads}")
+    logger.info(f"Number of Records: {len(payloads)}")
     insert_flow_readings(web_api_url, access_token, env_url, payloads)#,existing_gas_days)
 
 def get_table_record_ids( access_token, table_name,id_col, url):
