@@ -4,11 +4,13 @@ import pandas as pd
 import requests
 import json
 import os
+import logging
 from azure.storage.blob import BlobServiceClient
 from io import BytesIO
 import numpy as np
 import math
 import time
+import io
 import argparse
 import os
 from dotenv import load_dotenv
@@ -31,10 +33,11 @@ account_name = os.getenv('CSV_ACCOUNT_NAME')
 account_key = os.getenv('CSV_ACCOUNT_KEY')
 container_name = os.getenv('CSV_CONTAINER_NAME')
 
-FLOW_DIR = os.getenv('FLOW_DIR')
-# FLOW_FILE = os.getenv('FLOW_FILE')
-log_dir = os.getenv('FLOW_LOG_DIR')
-log_file_name = 'flow_import.log'
+ALARM_DIR = os.getenv('ALARM_DIR')
+column_names = ['Date','Time','Acknowledgement','Alarm Type','Alarm Limit','Priority','Alarm','Alarm Value','Alarm Comment','Resolution']
+
+log_dir = os.getenv('ALARM_LOG_DIR')
+log_file_name = 'alarm_import.log'
 log_path = log_dir+log_file_name
 if not os.path.exists(os.path.dirname(log_path)):
     os.makedirs(os.path.dirname(log_path))
@@ -57,6 +60,7 @@ if logger.hasHandlers():
 logger.addHandler(handler)
 
 
+
 def get_access_token(tenant_id,client_id,client_secret,env_url):
     access_token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     access_token_payload = f'grant_type=client_credentials&client_id={client_id}&client_secret={client_secret}&scope={env_url}/.default'
@@ -72,13 +76,29 @@ def get_access_token(tenant_id,client_id,client_secret,env_url):
 
 def get_source_data_from_azure(gas_date):
     gas_date_obj = datetime.strptime(gas_date,"%Y-%m-%d")
-    file_name = gas_date_obj.strftime("%y%m%d")
-    blob_file_name = f"{FLOW_DIR}/{file_name}.csv"
+    file_name = gas_date_obj.strftime("%y%m%d10")
+    blob_file_name = f"{ALARM_DIR}/{file_name}.CSV"
     source_df = get_blob_csv_file_as_df(blob_file_name)
     if source_df.empty:
-        raise Exception(f"Flow values are not present")
-    # logger.info(f"source_df: {source_df.head(1)}")
+        raise Exception(f"Alarm values are not present")
     return source_df
+
+def preprocess_csv(stream, expected_cols, delimiter=','):
+    lines = stream.read().decode('utf-8').splitlines()  
+    processed_rows = []
+
+    for line in lines:
+        cols = line.split(delimiter)
+
+        if len(cols) < expected_cols:
+            cols += [''] * (expected_cols - len(cols))
+        elif len(cols) > expected_cols:
+            cols = cols[:expected_cols]
+        new_row=delimiter.join(cols)
+        processed_rows.append(new_row)
+
+    processed_stream = io.StringIO("\n".join(processed_rows))
+    return processed_stream
 
 def get_blob_csv_file_as_df(blob_file_name):
     # Construct the connection string
@@ -104,9 +124,9 @@ def get_blob_csv_file_as_df(blob_file_name):
         # Download the blob data to a stream
         download_stream = blob_client.download_blob()
         stream = BytesIO(download_stream.readall())
-        df = pd.read_csv(stream)
+        stream=preprocess_csv(stream, len(column_names), delimiter=',')
+        df = pd.read_csv(stream,header=None, skip_blank_lines=True,on_bad_lines='warn')
         return df
-
     except Exception as e:  
         logger.error(f"Error processing blob: {e}")
         
@@ -168,21 +188,25 @@ def create_bulk_record( web_api_url, access_token, table_name,payloads):
     
 
 
-def transform_flow(df, gas_date):
-    df = df.dropna(axis=1, how='all')
-    logger.info(f"Total Columns {len(df.columns)}")
-    logger.info(f"Total Rows {df.shape[0]}")
-    df['TIME'] = gas_date + " " + df["TIME"]
-    df['TIME'] = pd.to_datetime(df['TIME'], format='%Y-%m-%d %I:%M:%S %p').dt.tz_localize('UTC')
-    start_time = pd.to_datetime('2024-10-02T00:00:00Z')
-    end_time = pd.to_datetime('2024-10-02T10:00:00Z')
-    mask = (df['TIME'] >= start_time) & (df['TIME'] < end_time)
-    df.loc[mask, 'TIME'] += pd.Timedelta(days=1)
-    df['TIME'] = df['TIME'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    df = pd.melt(df, id_vars='TIME', var_name='Name', value_name='Value')   
-    df_sorted = df.sort_values(by='TIME')
-    lowest_time = df_sorted['TIME'].min()
-    highest_time = df_sorted['TIME'].max() 
+def transform_alarm(df, gas_date):
+    df = df.dropna(how='all')
+    df.columns = column_names
+    num_col = len(column_names)
+    total_col = 10
+    df['DateTime'] = df["Date"] + " " + df["Time"]
+    # logger.info(df.head(30))
+    df['DateTime'] = pd.to_datetime(df['DateTime'], format='%d %b %Y %H:%M:%S.%f',errors='coerce')
+    df.dropna(subset=['DateTime'],inplace=True)
+    df['DateTime'] = df['DateTime'].dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    df.drop(columns=['Date','Time'],inplace=True)
+    # df = pd.melt(df, id_vars='TIME', var_name='Name', value_name='Value')    
+    df_sorted = df.sort_values(by='DateTime')
+
+    # Get the lowest and highest times
+    lowest_time = df_sorted['DateTime'].min()
+    highest_time = df_sorted['DateTime'].max()
+    logger.info(f"Starts from time {lowest_time}")
+    logger.info(f"Ends at time {highest_time}")
     return df, lowest_time, highest_time
 
 def create_record( web_api_url, access_token, table_name,payload, id_col):
@@ -271,10 +295,10 @@ def split_into_chunks(payload_list, splits=5):
     split_list = [i for i in split_list if i !=[]]
     return split_list
 
-def insert_flow_readings(web_api_url, access_token, env_url, payloads):#, existing_gas_days):
-    singular_table_name = "gas_flow"
-    table_name="gas_flows"
-    id_col="gas_flowid"
+def insert_alarm_readings(web_api_url, access_token, env_url, payloads):#, existing_gas_days):
+    singular_table_name = "gas_alarm"
+    table_name="gas_alarms"
+    id_col="gas_alarmid"
     exception_counter = 0
     # result={"status":"","success_count":0,"fail_count":0,"skipped_count":0,"total_count":len(payloads)}
     fail = False
@@ -292,10 +316,10 @@ def insert_flow_readings(web_api_url, access_token, env_url, payloads):#, existi
                 fail=True
                 break
             access_token = get_access_token(tenant_id,client_id,client_secret,env_url)
-        logger.info(f"Flow values are successfully written to dataverse")
         if fail:
             logger.error(f"Issue in writing to dataverse in batches")
             raise Exception(f"Issue in writing to dataverse in batches")
+        logger.info(f"Alarm values are successfully written to dataverse")
     except Exception as e:
         logger.error(f"Exception occured while writing to dataverse : {e}")
         raise Exception(f"Exception occured while writing to dataverse : {e}")
@@ -304,12 +328,18 @@ def insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_
     payloads = []
     for index, rec in processed_df.iterrows():
         payloads.append({
-                    "gas_datetime":rec['TIME'],
-                    "gas_name":rec["Name"],
-                    "gas_value":float(rec['Value'])
-    })
-    logger.info(f"Number of Records: {len(payloads)}")
-    insert_flow_readings(web_api_url, access_token, env_url, payloads)#,existing_gas_days)
+                    "gas_datetime":rec['DateTime'] if not pd.isna(rec['DateTime'])  else None,
+                    "gas_acknowledgement":str(rec["Acknowledgement"]) if not pd.isna(rec['Acknowledgement']) else None,
+                    "gas_alarmtype":str(rec['Alarm Type']) if not pd.isna(rec['Alarm Type']) else None,
+                    "gas_alarmlimit":str(rec['Alarm Limit']) if not pd.isna(rec['Alarm Limit']) else None,
+                    "gas_priority":int(rec['Priority']) if not pd.isna(rec['Priority']) else None,
+                    "gas_alarm":str(rec["Alarm"]) if not pd.isna(rec['Alarm']) else None,
+                    "gas_alarmvalue":str(rec['Alarm Value']) if not pd.isna(rec['Alarm Value']) else None,
+                    "gas_alarmcomment":str(rec['Alarm Comment']) if not pd.isna(rec['Alarm Comment']) else None,
+                    "gas_resolution":str(rec['Resolution']) if not pd.isna(rec['Resolution']) else None
+                            })
+    logger.info(f"Total Records {len(payloads)}")
+    insert_alarm_readings(web_api_url, access_token, env_url, payloads)#,existing_gas_days)
 
 def get_table_record_ids( access_token, table_name,id_col, url):
     try:
@@ -335,17 +365,17 @@ def get_table_record_ids( access_token, table_name,id_col, url):
     except Exception as e:
             raise Exception(f"Exception occurred while obtaining Table Record Ids: {e}")
             # return {'status':'fail'}
-def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
+def find_and_del_alarm(web_api_url, access_token, lowest_time, highest_time):
     try:
-        table_name="gas_flows"
-        id_col="gas_flowid"
+        table_name="gas_alarms"
+        id_col="gas_alarmid"
         date_filter = f"&$filter=gas_datetime ge {lowest_time} and gas_datetime le {highest_time}"
         url = (
             f"{web_api_url}/{table_name}?$select={id_col}"
             f"{date_filter}"
         )
         iteration = 0
-        logger.info("Find and Delete Flows")
+        logger.info("Find and Delete Alarms")
         delete_results ={"Total Iterations":None,"Delete Status":None, "Detailed Results":{"Iteration":{}}}
         while True:
             iteration+=1
@@ -368,7 +398,7 @@ def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
                     total_len=len(record_ids)
                     count_per_batch = 1000
                     splits = math.ceil(total_len / count_per_batch)
-                    logger.info(f"     Batches: {splits}; ")
+                    logger.info(f"      Batches: {splits}; ")
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]={"Records to Delete":None,"Total Batches":None,"Batch":{},"Delete Status":None}
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]["Records to Delete"]=to_delete_count
                     delete_results["Detailed Results"]["Iteration"][f"{iteration}"]["Total Batches"]=splits
@@ -387,13 +417,13 @@ def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
         delete_results["Delete Status"]="success"
         return delete_results
     except Exception as e:
-        raise Exception(f"Error in deleting flow records {e}")
-# def find_and_del_flow(web_api_url, access_token, gas_date):
-#     table_name="gas_flows"
-#     get_all_flow_ids(web_api_url, access_token, table_name, gas_date)
+        raise Exception(f"Error in deleting alarm records {e}")
+# def find_and_del_alarm(web_api_url, access_token, gas_date):
+#     table_name="gas_alarms"
+#     get_all_alarm_ids(web_api_url, access_token, table_name, gas_date)
 #         to_delete_count = len(record_ids)
 #         if to_delete_count==0:
-#             flows_present = False
+#             alarms_present = False
 #         deleted_count=0
 #         delete_results=[]
 #         logger.info(f"Number of Records to delete: {to_delete_count}")
@@ -420,26 +450,26 @@ def find_and_del_flow(web_api_url, access_token, lowest_time, highest_time):
 #         else:
 #             return {'status':'fail','message':'Some deleted',  "to_delete":to_delete_count, "deleted": deleted_count,'undeleted':undeleted, 'delete_results':delete_results}
     
-def delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time):
-    # del_result = find_and_del_flow(web_api_url, access_token, gas_date)
+def delete_existing_alarm(web_api_url, access_token, env_url, lowest_time, highest_time):
+    # del_result = find_and_del_alarm(web_api_url, access_token, gas_date)
     try:
         start_time = time.time()
         # logger.info(f"Starting Time for Delete Job {start_time}")
-        del_result = find_and_del_flow(web_api_url, access_token, lowest_time, highest_time)
+        del_result = find_and_del_alarm(web_api_url, access_token, lowest_time, highest_time)
         end_time = time.time()
         time_taken = end_time - start_time
         # logger.info(f"Ending Time for Delete Job {end_time}")
         logger.info(f"Time taken to run the function: {time_taken:.4f} seconds")
-        logger.info(f"Successfully deleted existing flows\n{json.dumps(del_result,indent=4)}")
+        logger.info(f"Successfully deleted existing alarms\n{json.dumps(del_result,indent=4)}")
         # if del_result["status"]=="success":
         #     if del_result["to_delete"]==0:
         #         logger.info(f"No records to delete for {gas_date}")
         #     else:
-        #         logger.info(f"Existing flow for {gas_date} are deleted before import - {del_result}")
+        #         logger.info(f"Existing alarm for {gas_date} are deleted before import - {del_result}")
         # else:
-        #     raise Exception(f"Unable to delete exisiting flow values from the table for {gas_date} - {del_result}")
+        #     raise Exception(f"Unable to delete exisiting alarm values from the table for {gas_date} - {del_result}")
     except Exception as e:
-        logger.error(f"Error in deleting existing flow for : {e}")
+        logger.error(f"Error in deleting existing alarm : {e}")
         raise  
 
 def delete_record(web_api_url, access_token, table_name, id):
@@ -476,7 +506,7 @@ def delete_record(web_api_url, access_token, table_name, id):
 #     body = {
 #         "QuerySet": [
 #             {
-#                 "EntityName": "flows",
+#                 "EntityName": "alarms",
 #                 "DataSource": "retained",
 #                 "Criteria": {
 #                     "FilterOperator": "And",
@@ -548,51 +578,48 @@ def bulk_delete(web_api_url, access_token, table_name, ids):
             logger.info("      Batch delete request sent successfully.")
             return {"status":"success"}
         else:
-            raise Exception(f"Error in deleting flows in bulk: {response.status_code} - {response.reason} ")
+            raise Exception(f"Error in deleting alarms in bulk: {response.status_code} - {response.reason} ")
     except Exception as e:
-        raise Exception(f"Exception occured while deleting flows in bulk: {e}")
+        raise Exception(f"Exception occured while deleting alarms in bulk: {e}")
 
-def flow_import(gas_date:str, env:str):
-
+def alarm_import(gas_date:str, env:str):
+    logger.info("***************START*********************")
+    eastern = pytz.timezone('US/Eastern')
+    job_start_time_est = datetime.now(eastern)
+    logger.info(f"Starting the scan and upload job at {job_start_time_est}...")
+    if gas_date=='auto':
+        gas_date = job_start_time_est - timedelta(days=1)
+        gas_date = gas_date.strftime('%Y-%m-%d')
     try:
-        logger.info("***************START*********************")
-        eastern = pytz.timezone('US/Eastern')
-        job_start_time_est = datetime.now(eastern)
-        logger.info(f"Starting the scan and upload job at {job_start_time_est}...")
-        if gas_date=='auto':
-            gas_date = job_start_time_est - timedelta(days=1)
-            gas_date = gas_date.strftime('%Y-%m-%d')
         if env=="dev":
             env_url=os.getenv("DV_ENV_URL")
         elif env=="stage":
             env_url=os.getenv("DV_STAGE_ENV_URL")
         web_api_url = f"{env_url}/api/data/v9.2"
         access_token = get_access_token(tenant_id,client_id,client_secret,env_url)
-        logger.info(f"FLOW IMPORT for {gas_date}")
+        logger.info(f"ALARM IMPORT for {gas_date}")
         logger.info(f"Getting source data for {gas_date}")
         source_df = get_source_data_from_azure(gas_date)
         logger.info(f"Transforming data")
-        processed_df, lowest_time, highest_time = transform_flow(source_df, gas_date)
-        processed_df.to_csv("dfa")
-        delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time)
+        processed_df, lowest_time, highest_time = transform_alarm(source_df, gas_date)
+        delete_existing_alarm(web_api_url, access_token, env_url, lowest_time, highest_time)
         logger.info(f"Writing data to dataverse")
-        insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)    
-        logger.info(f"Flow Import Successfull")            
+        insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)
+        logger.info(f"Alarm Import Successfull")
         logger.info(f"IMPORT FOR {gas_date} SUCCESSFULL")
         print(f"IMPORT FOR {gas_date} SUCCESSFULL")
     except Exception as e:
         logger.error(f"IMPORT FOR {gas_date} UNSUCCESSFULL {e}")
         print(f"IMPORT FOR {gas_date} UNSUCCESSFULL {e}")
-        subject="Error: Issue in importing Flow Data to Azure Storage"
-        body=f"Flow Import Job Failed \n\nJob Start Time: \n{job_start_time_est} \n\nError: \n"
+        subject="Error: Issue in importing Alarm Data to Azure Storage"
+        body=f"Alarm Import Job Failed \n\nJob Start Time: \n{job_start_time_est} \n\nError: \n"
         send_email_notification(subject, body, logger)
     finally:
         logger.info("***************END*********************")
 
-
 if __name__=="__main__":
-    parser = argparse.ArgumentParser(description="Flow Import")
-    parser.add_argument('--gas_date', type=str, help='The date you want to import in yyyy-mm-dd format; If left empty, program will import yesterday\'s flow',default='auto')
+    parser = argparse.ArgumentParser(description="Alarm Import")
+    parser.add_argument('--gas_date', type=str, help='The date you want to import in yyyy-mm-dd format; If left empty, program will import yesterday\'s alarms',default='auto')
     parser.add_argument('--env', choices=['dev', 'stage'], help='Environment', default='dev')
     args = parser.parse_args()
-    flow_import(args.gas_date, args.env)
+    alarm_import(args.gas_date, args.env)

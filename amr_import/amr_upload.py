@@ -30,7 +30,7 @@ directory_name=AMR_DIR
 
 # Azure Data Lake credentials
 # log_dir = 'C:/Users/v91147/Downloads/Migrate/CEG_etl_data_migration/amr_import/amr_log/'
-log_dir = os.getenv('log_dir')
+log_dir = os.getenv('AMR_LOG_DIR')
 log_file_name = 'amr_upload.log'
 log_path = log_dir+log_file_name
 if not os.path.exists(os.path.dirname(log_path)):
