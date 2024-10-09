@@ -573,7 +573,6 @@ def flow_import(gas_date:str, env:str):
         source_df = get_source_data_from_azure(gas_date)
         logger.info(f"Transforming data")
         processed_df, lowest_time, highest_time = transform_flow(source_df, gas_date)
-        processed_df.to_csv("dfa")
         delete_existing_flow(web_api_url, access_token, env_url, lowest_time, highest_time)
         logger.info(f"Writing data to dataverse")
         insert_to_dataverse(web_api_url, access_token, env_url, gas_date, processed_df)    
