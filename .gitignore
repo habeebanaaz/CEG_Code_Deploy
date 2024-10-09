@@ -8,3 +8,4 @@ venv
 amr_import/amr_log/*.log
 amr_import/amr_data.csv
 flow_import/flow_log/*.log
+alarm_import/alarm_log/*.log
