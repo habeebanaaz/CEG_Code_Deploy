@@ -1,4 +1,4 @@
-# FLOW Import SCRIPT EXECUTION COMMANDS
+# PerryK Upload SCRIPT EXECUTION COMMANDS
 
 ### 1. Open Command Prompt 
 Navigate to the script directory:
@@ -12,34 +12,35 @@ Run the following command to activate the virtual environment:
 .\venv\Scripts\Activate
 ```
 
-### 3. Change Directory to Flow Import
-Navigate to the `flow_import` directory:
+### 3. Change Directory to PerryK Upload
+Navigate to the `perryK_upload` directory:
 ```
-cd flow_import
+cd perryK_upload
 ```
 
 ### 4. Execute the Script
 Run the script with the required arguments:
 ```
-py flow_import.py --gas_date <gas_date> --env <env>
+py perryK_upload.py --date <date> --hour <hour> --env <env>
 ```
 
 **Positional Arguments:**
-- `gas_date`: The date to be imported, formatted as `yyyy-mm-dd`.
-- `env`: The target environment, which can be either `{dev, stage}`.
+  --date  The date you want to upload in yyyy-mm-dd format; If left empty, program will import today's perryK data
+  --hour      The hour you want to upload as a number; If left empty, program will import current hour's perryK data
+  --env {dev,stage}    Environment
 
 **Example:**
 ```
-python flow_import.py --gas_date 2024-10-01 --env dev
+python perryK_upload.py --date 2024-10-01 --hour 14 --env dev
 ```
 
-If the program executes successfully, you will see the following message in the output and in log file (under ./flow_log/flow_import.log):
+If the program executes successfully, you will see the following message in the output and in log file (under ./perryK_log/perryK_upload.log):
 ```
-IMPORT FOR <gas_date> SUCCESSFUL
+UPLOAD FOR <date> SUCCESSFUL
 ```
 
-If the execution fails, the output and log file message (under ./flow_log/flow_import.log) will be:
+If the execution fails, the output and log file message (under ./perryK_log/perryK_upload.log) will be:
 ```
-IMPORT FOR <gas_date> UNSUCCESSFUL. 
+UPLOAD FOR <date> UNSUCCESSFUL. 
 ```
 Please check your arguments and try again.

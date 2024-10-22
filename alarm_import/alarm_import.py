@@ -612,7 +612,7 @@ def alarm_import(gas_date:str, env:str):
         logger.error(f"IMPORT FOR {gas_date} UNSUCCESSFULL {e}")
         print(f"IMPORT FOR {gas_date} UNSUCCESSFULL {e}")
         subject="Error: Issue in importing Alarm Data to Azure Storage"
-        body=f"Alarm Import Job Failed \n\nJob Start Time: \n{job_start_time_est} \n\nError: \n"
+        body=f"Alarm Import Job Failed \n\nJob Start Time: \n{job_start_time_est} \n\nError:\n\n {e}\n"
         send_email_notification(subject, body, logger)
     finally:
         logger.info("***************END*********************")
