@@ -33,7 +33,9 @@ py perryK_upload.py --date <date> --hour <hour> --env <env>
 ```
 python perryK_upload.py --date 2024-10-01 --hour 14 --env dev
 ```
-
+```
+python perryK_upload.py --env dev
+```
 If the program executes successfully, you will see the following message in the output and in log file (under ./perryK_log/perryK_upload.log):
 ```
 UPLOAD FOR <date> SUCCESSFUL
